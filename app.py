@@ -47,21 +47,20 @@ st.markdown("""
 def get_connection_url():
     """Get the Lakebase connection URL from environment variable.
     
-    When you declare a secret resource in app.yaml with name 'lakebase_connection',
-    Databricks Apps injects it as an environment variable.
+    The app resource configured in the UI has name 'secret', 
+    so Databricks Apps injects it as environment variable 'SECRET'.
     """
-    # The resource name from app.yaml becomes an environment variable
-    connection_url = os.environ.get("LAKEBASE_CONNECTION")
+    # The resource name from the app config becomes the environment variable name
+    connection_url = os.environ.get("SECRET")
     
     if not connection_url:
         st.error("❌ Database connection not found")
-        st.write("**Debug: Environment variables:**")
-        # Show all env vars for debugging (mask values)
-        debug_vars = {k: "***" if "PASSWORD" in k or "SECRET" in k or "TOKEN" in k else v[:50] 
-                      for k, v in os.environ.items() 
-                      if "LAKEBASE" in k or "CONNECTION" in k or k.startswith("DATABRICKS")}
+        st.write("**Debug: Available environment variables:**")
+        # Show relevant env vars for debugging
+        debug_vars = {k: "<hidden>" if any(x in k.upper() for x in ["PASSWORD", "SECRET", "TOKEN"]) else str(v)[:50] 
+                      for k, v in os.environ.items()}
         st.json(debug_vars)
-        st.info("💡 Make sure app.yaml has the resource declared and redeploy")
+        st.info("💡 Make sure the app resource 'secret' is configured in Databricks Apps UI")
         st.stop()
     
     return connection_url
