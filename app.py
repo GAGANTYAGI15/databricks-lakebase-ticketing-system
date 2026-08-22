@@ -1,9 +1,9 @@
 import streamlit as st
-import psycopg
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import os
 from datetime import datetime
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.core import Config
+from contextlib import contextmanager
 
 # Page configuration
 st.set_page_config(
@@ -43,192 +43,238 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-@st.cache_resource
+# Initialize session state for connection URL
+if 'lakebase_url' not in st.session_state:
+    st.session_state.lakebase_url = None
+if 'connected' not in st.session_state:
+    st.session_state.connected = False
+
+@contextmanager
 def get_connection():
-    """Get database connection with OAuth token"""
+    """Get database connection using the provided URL"""
+    if not st.session_state.lakebase_url:
+        st.error("❌ No database connection URL provided")
+        yield None
+        return
+    
     try:
-        # Get Lakebase connection details from environment
-        host = os.environ.get("LAKEBASE_HOST")
-        database = os.environ.get("LAKEBASE_DATABASE", "databricks_postgres")
-        
-        if not host:
-            st.error("❌ LAKEBASE_HOST environment variable not set")
-            return None
-        
-        # Generate OAuth token using Databricks SDK
-        config = Config(
-            host=os.environ.get("DATABRICKS_HOST"),
-            token=os.environ.get("DATABRICKS_TOKEN")
-        )
-        w = WorkspaceClient(config=config)
-        
-        # Get current user for connection
-        user = w.current_user.me()
-        username = user.user_name
-        
-        # Generate database credential
-        endpoint_name = os.environ.get("LAKEBASE_ENDPOINT")
-        if not endpoint_name:
-            st.error("❌ LAKEBASE_ENDPOINT environment variable not set")
-            return None
-            
-        token = w.postgres.generate_database_credential(endpoint=endpoint_name).token
-        
-        # Create connection
-        conn = psycopg.connect(
-            host=host,
-            dbname=database,
-            user=username,
-            password=token,
-            sslmode="require"
-        )
-        return conn
+        conn = psycopg2.connect(st.session_state.lakebase_url, cursor_factory=RealDictCursor)
+        yield conn
     except Exception as e:
         st.error(f"❌ Database connection failed: {str(e)}")
-        return None
+        yield None
+    finally:
+        if conn:
+            conn.close()
 
 def get_all_tickets(status_filter=None):
     """Fetch all tickets with optional status filter"""
-    conn = get_connection()
-    if not conn:
-        return []
-    
-    try:
-        with conn.cursor() as cur:
-            if status_filter and status_filter != "All":
-                cur.execute("""
-                    SELECT ticket_id, title, status, priority, category, created_by, created_at
-                    FROM tickets
-                    WHERE status = %s
-                    ORDER BY created_at DESC
-                """, (status_filter.lower(),))
-            else:
-                cur.execute("""
-                    SELECT ticket_id, title, status, priority, category, created_by, created_at
-                    FROM tickets
-                    ORDER BY created_at DESC
-                """)
-            return cur.fetchall()
-    except Exception as e:
-        st.error(f"Error fetching tickets: {str(e)}")
-        return []
+    with get_connection() as conn:
+        if not conn:
+            return []
+        
+        try:
+            with conn.cursor() as cur:
+                if status_filter and status_filter != "All":
+                    cur.execute("""
+                        SELECT ticket_id, title, status, priority, category, created_by, created_at
+                        FROM tickets
+                        WHERE status = %s
+                        ORDER BY created_at DESC
+                    """, (status_filter.lower(),))
+                else:
+                    cur.execute("""
+                        SELECT ticket_id, title, status, priority, category, created_by, created_at
+                        FROM tickets
+                        ORDER BY created_at DESC
+                    """)
+                return cur.fetchall()
+        except Exception as e:
+            st.error(f"Error fetching tickets: {str(e)}")
+            return []
 
 def get_ticket_messages(ticket_id):
     """Fetch messages for a specific ticket"""
-    conn = get_connection()
-    if not conn:
-        return []
-    
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT message_id, message_text, author, created_at
-                FROM ticket_messages
-                WHERE ticket_id = %s
-                ORDER BY created_at ASC
-            """, (ticket_id,))
-            return cur.fetchall()
-    except Exception as e:
-        st.error(f"Error fetching messages: {str(e)}")
-        return []
+    with get_connection() as conn:
+        if not conn:
+            return []
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT message_id, message_text, author, created_at
+                    FROM ticket_messages
+                    WHERE ticket_id = %s
+                    ORDER BY created_at ASC
+                """, (ticket_id,))
+                return cur.fetchall()
+        except Exception as e:
+            st.error(f"Error fetching messages: {str(e)}")
+            return []
 
 def create_ticket(title, priority, category, created_by):
     """Create a new ticket"""
-    conn = get_connection()
-    if not conn:
-        return False
-    
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO tickets (title, status, priority, category, created_by)
-                VALUES (%s, 'open', %s, %s, %s)
-                RETURNING ticket_id
-            """, (title, priority, category, created_by))
-            conn.commit()
-            return cur.fetchone()[0]
-    except Exception as e:
-        st.error(f"Error creating ticket: {str(e)}")
-        conn.rollback()
-        return False
+    with get_connection() as conn:
+        if not conn:
+            return False
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO tickets (title, status, priority, category, created_by)
+                    VALUES (%s, 'open', %s, %s, %s)
+                    RETURNING ticket_id
+                """, (title, priority, category, created_by))
+                conn.commit()
+                return cur.fetchone()['ticket_id']
+        except Exception as e:
+            st.error(f"Error creating ticket: {str(e)}")
+            conn.rollback()
+            return False
 
 def add_message(ticket_id, message_text, author):
     """Add a message to a ticket"""
-    conn = get_connection()
-    if not conn:
-        return False
-    
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO ticket_messages (ticket_id, message_text, author)
-                VALUES (%s, %s, %s)
-            """, (ticket_id, message_text, author))
-            
-            # Update ticket's updated_at timestamp
-            cur.execute("""
-                UPDATE tickets
-                SET updated_at = CURRENT_TIMESTAMP
-                WHERE ticket_id = %s
-            """, (ticket_id,))
-            conn.commit()
-            return True
-    except Exception as e:
-        st.error(f"Error adding message: {str(e)}")
-        conn.rollback()
-        return False
+    with get_connection() as conn:
+        if not conn:
+            return False
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO ticket_messages (ticket_id, message_text, author)
+                    VALUES (%s, %s, %s)
+                """, (ticket_id, message_text, author))
+                
+                # Update ticket's updated_at timestamp
+                cur.execute("""
+                    UPDATE tickets
+                    SET updated_at = CURRENT_TIMESTAMP
+                    WHERE ticket_id = %s
+                """, (ticket_id,))
+                conn.commit()
+                return True
+        except Exception as e:
+            st.error(f"Error adding message: {str(e)}")
+            conn.rollback()
+            return False
 
 def update_ticket_status(ticket_id, new_status):
     """Update ticket status"""
-    conn = get_connection()
-    if not conn:
-        return False
-    
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE tickets
-                SET status = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE ticket_id = %s
-            """, (new_status, ticket_id))
-            conn.commit()
-            return True
-    except Exception as e:
-        st.error(f"Error updating status: {str(e)}")
-        conn.rollback()
-        return False
+    with get_connection() as conn:
+        if not conn:
+            return False
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE tickets
+                    SET status = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE ticket_id = %s
+                """, (new_status, ticket_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            st.error(f"Error updating status: {str(e)}")
+            conn.rollback()
+            return False
 
 def get_ticket_stats():
     """Get ticket statistics"""
-    conn = get_connection()
-    if not conn:
-        return {}
-    
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 
-                    COUNT(*) as total,
-                    COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
-                    COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress,
-                    COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved
-                FROM tickets
-            """)
-            result = cur.fetchone()
-            return {
-                'total': result[0],
-                'open': result[1],
-                'in_progress': result[2],
-                'resolved': result[3]
-            }
-    except Exception as e:
-        st.error(f"Error fetching stats: {str(e)}")
-        return {}
+    with get_connection() as conn:
+        if not conn:
+            return {}
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        COUNT(*) as total,
+                        COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
+                        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress,
+                        COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved
+                    FROM tickets
+                """)
+                result = cur.fetchone()
+                return {
+                    'total': result['total'],
+                    'open': result['open'],
+                    'in_progress': result['in_progress'],
+                    'resolved': result['resolved']
+                }
+        except Exception as e:
+            st.error(f"Error fetching stats: {str(e)}")
+            return {}
 
 # Main App
 def main():
     st.title("🎫 Support Ticket System")
     st.markdown("*Powered by Lakebase*")
+    
+    # Connection URL input (if not already connected)
+    if not st.session_state.connected:
+        st.info("👋 Welcome! Please enter your Lakebase connection URL to get started.")
+        
+        with st.form(key="connection_form"):
+            st.markdown("### Database Connection")
+            st.markdown("""
+            Enter your Lakebase PostgreSQL connection URL in the format:
+            ```
+            postgresql://role:password@host:5432/databricks_postgres?sslmode=require
+            ```
+            """)
+            
+            connection_url = st.text_input(
+                "Lakebase URL",
+                type="password",
+                placeholder="postgresql://role:password@host.database.cloud.databricks.com:5432/databricks_postgres?sslmode=require",
+                help="You can get this from your Lakebase project settings or Databricks workspace admin"
+            )
+            
+            connect_button = st.form_submit_button("Connect")
+            
+            if connect_button:
+                if connection_url:
+                    # Test the connection
+                    try:
+                        test_conn = psycopg2.connect(connection_url)
+                        test_conn.close()
+                        st.session_state.lakebase_url = connection_url
+                        st.session_state.connected = True
+                        st.success("✅ Connected successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Connection failed: {str(e)}")
+                        st.info("Please check your connection URL and try again.")
+                else:
+                    st.error("❌ Please enter a connection URL")
+        
+        # Show example connection URL
+        with st.expander("ℹ️ How to get your Lakebase URL"):
+            st.markdown("""
+            **Option 1: Using Databricks CLI**
+            ```bash
+            databricks postgres list-endpoints --parent projects/my-lakebase/branches/production
+            ```
+            
+            **Option 2: From the reference project**
+            Check the `.env.example` file in `databricks-lakebase-gagan` folder for the format.
+            
+            **Format:**
+            - `role`: Your Postgres role name (typically your Databricks email)
+            - `password`: Native Postgres password or OAuth token
+            - `host`: Your Lakebase endpoint host (e.g., `ep-xxx.database.cloud.databricks.com`)
+            - `database`: Usually `databricks_postgres`
+            """)
+        
+        return  # Don't show the rest of the app until connected
+    
+    # Show disconnect option in sidebar
+    with st.sidebar:
+        if st.button("🔌 Disconnect"):
+            st.session_state.connected = False
+            st.session_state.lakebase_url = None
+            st.rerun()
+        st.markdown("---")
     
     # Sidebar for navigation
     page = st.sidebar.selectbox(
