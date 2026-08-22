@@ -1,9 +1,10 @@
 import streamlit as st
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import os
+import base64
 from datetime import datetime
 from contextlib import contextmanager
+from databricks.sdk import WorkspaceClient
 
 # Page configuration
 st.set_page_config(
@@ -43,22 +44,70 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state for connection URL
-if 'lakebase_url' not in st.session_state:
-    st.session_state.lakebase_url = None
-if 'connected' not in st.session_state:
-    st.session_state.connected = False
+# Configuration
+SCOPE = "ticketing"
+KEY = "lakebase-url"
+
+@st.cache_resource
+def get_connection_url():
+    """Fetch the Lakebase connection URL from secrets."""
+    try:
+        w = WorkspaceClient()
+        secret = w.secrets.get_secret(scope=SCOPE, key=KEY)
+        return base64.b64decode(secret.value).decode("utf-8")
+    except Exception as e:
+        st.error("❌ Could not retrieve database connection from secrets")
+        st.info("💡 Run setup_secrets.py to configure the connection")
+        st.stop()
+
+@st.cache_resource
+def init_database():
+    """Initialize database tables if they don't exist."""
+    connection_url = get_connection_url()
+    try:
+        conn = psycopg2.connect(connection_url)
+        with conn.cursor() as cur:
+            # Create tickets table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tickets (
+                    ticket_id SERIAL PRIMARY KEY,
+                    title VARCHAR(255) NOT NULL,
+                    status VARCHAR(50) NOT NULL DEFAULT 'open',
+                    priority VARCHAR(20) DEFAULT 'medium',
+                    category VARCHAR(100),
+                    created_by VARCHAR(255) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Create ticket_messages table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_messages (
+                    message_id SERIAL PRIMARY KEY,
+                    ticket_id INTEGER NOT NULL,
+                    message_text TEXT NOT NULL,
+                    author VARCHAR(255) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ticket_id) REFERENCES tickets(ticket_id) ON DELETE CASCADE
+                )
+            """)
+            # Create indexes
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket_id ON ticket_messages(ticket_id)")
+            conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"❌ Database initialization failed: {str(e)}")
+        return False
 
 @contextmanager
 def get_connection():
-    """Get database connection using the provided URL"""
-    if not st.session_state.lakebase_url:
-        st.error("❌ No database connection URL provided")
-        yield None
-        return
-    
+    """Get database connection."""
+    connection_url = get_connection_url()
+    conn = None
     try:
-        conn = psycopg2.connect(st.session_state.lakebase_url, cursor_factory=RealDictCursor)
+        conn = psycopg2.connect(connection_url, cursor_factory=RealDictCursor)
         yield conn
     except Exception as e:
         st.error(f"❌ Database connection failed: {str(e)}")
@@ -66,6 +115,9 @@ def get_connection():
     finally:
         if conn:
             conn.close()
+
+# Initialize database on app startup
+init_database()
 
 def get_all_tickets(status_filter=None):
     """Fetch all tickets with optional status filter"""
@@ -209,72 +261,6 @@ def get_ticket_stats():
 def main():
     st.title("🎫 Support Ticket System")
     st.markdown("*Powered by Lakebase*")
-    
-    # Connection URL input (if not already connected)
-    if not st.session_state.connected:
-        st.info("👋 Welcome! Please enter your Lakebase connection URL to get started.")
-        
-        with st.form(key="connection_form"):
-            st.markdown("### Database Connection")
-            st.markdown("""
-            Enter your Lakebase PostgreSQL connection URL in the format:
-            ```
-            postgresql://role:password@host:5432/databricks_postgres?sslmode=require
-            ```
-            """)
-            
-            connection_url = st.text_input(
-                "Lakebase URL",
-                type="password",
-                placeholder="postgresql://role:password@host.database.cloud.databricks.com:5432/databricks_postgres?sslmode=require",
-                help="You can get this from your Lakebase project settings or Databricks workspace admin"
-            )
-            
-            connect_button = st.form_submit_button("Connect")
-            
-            if connect_button:
-                if connection_url:
-                    # Test the connection
-                    try:
-                        test_conn = psycopg2.connect(connection_url)
-                        test_conn.close()
-                        st.session_state.lakebase_url = connection_url
-                        st.session_state.connected = True
-                        st.success("✅ Connected successfully!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Connection failed: {str(e)}")
-                        st.info("Please check your connection URL and try again.")
-                else:
-                    st.error("❌ Please enter a connection URL")
-        
-        # Show example connection URL
-        with st.expander("ℹ️ How to get your Lakebase URL"):
-            st.markdown("""
-            **Option 1: Using Databricks CLI**
-            ```bash
-            databricks postgres list-endpoints --parent projects/my-lakebase/branches/production
-            ```
-            
-            **Option 2: From the reference project**
-            Check the `.env.example` file in `databricks-lakebase-gagan` folder for the format.
-            
-            **Format:**
-            - `role`: Your Postgres role name (typically your Databricks email)
-            - `password`: Native Postgres password or OAuth token
-            - `host`: Your Lakebase endpoint host (e.g., `ep-xxx.database.cloud.databricks.com`)
-            - `database`: Usually `databricks_postgres`
-            """)
-        
-        return  # Don't show the rest of the app until connected
-    
-    # Show disconnect option in sidebar
-    with st.sidebar:
-        if st.button("🔌 Disconnect"):
-            st.session_state.connected = False
-            st.session_state.lakebase_url = None
-            st.rerun()
-        st.markdown("---")
     
     # Sidebar for navigation
     page = st.sidebar.selectbox(
