@@ -50,11 +50,12 @@ def get_connection_url():
     
     The app resource configured in the UI has name 'secret', 
     so Databricks Apps injects it as environment variable 'SECRET'.
+    The secret is stored base64-encoded.
     """
     # The resource name from the app config becomes the environment variable name
     connection_url_encoded = os.environ.get("SECRET")
     
-    if not connection_url:
+    if not connection_url_encoded:
         st.error("❌ Database connection not found")
         st.write("**Debug: Available environment variables:**")
         # Show relevant env vars for debugging
@@ -64,7 +65,14 @@ def get_connection_url():
         st.info("💡 Make sure the app resource 'secret' is configured in Databricks Apps UI")
         st.stop()
     
-    return connection_url
+    # Decode from base64
+    try:
+        connection_url = base64.b64decode(connection_url_encoded).decode('utf-8')
+        return connection_url
+    except Exception as e:
+        st.error(f"❌ Failed to decode connection URL: {e}")
+        st.stop()
+
 
 @st.cache_resource
 def init_database():
