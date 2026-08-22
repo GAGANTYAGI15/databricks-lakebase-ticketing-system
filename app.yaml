@@ -3,3 +3,10 @@ command:
   - run
   - app.py
   - --server.port=8080
+
+resources:
+  - name: lakebase_connection
+    secret:
+      scope: ticketing
+      key: lakebase-url
+      permission: READ

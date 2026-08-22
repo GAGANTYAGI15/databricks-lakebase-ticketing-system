@@ -47,34 +47,21 @@ st.markdown("""
 def get_connection_url():
     """Get the Lakebase connection URL from environment variable.
     
-    In Databricks Apps, secrets configured as resources are automatically
-    injected as environment variables.
+    When you declare a secret resource in app.yaml with name 'lakebase_connection',
+    Databricks Apps injects it as an environment variable.
     """
-    # Try different possible environment variable names
-    possible_names = [
-        "SECRET_ticketing_lakebase_url",      # scope_key with hyphen->underscore
-        "SECRET_ticketing_lakebase-url",      # scope_key with hyphen kept
-        "SECRET_TICKETING_LAKEBASE_URL",      # uppercase
-        "LAKEBASE_URL",                        # simple name
-        "secret",                              # resource name from app config
-    ]
-    
-    connection_url = None
-    for name in possible_names:
-        connection_url = os.environ.get(name)
-        if connection_url:
-            st.success(f"✅ Found connection at: {name}")
-            break
+    # The resource name from app.yaml becomes an environment variable
+    connection_url = os.environ.get("LAKEBASE_CONNECTION")
     
     if not connection_url:
-        st.error("❌ Database connection not configured")
-        st.write("**Debug: Available SECRET_ environment variables:**")
-        secret_vars = {k: "***" for k in os.environ.keys() if "SECRET" in k.upper() or "LAKEBASE" in k.upper()}
-        if secret_vars:
-            st.json(secret_vars)
-        else:
-            st.warning("No SECRET or LAKEBASE environment variables found")
-        st.info("💡 Configure the app resource in Databricks Apps UI: secret scope='ticketing', key='lakebase-url'")
+        st.error("❌ Database connection not found")
+        st.write("**Debug: Environment variables:**")
+        # Show all env vars for debugging (mask values)
+        debug_vars = {k: "***" if "PASSWORD" in k or "SECRET" in k or "TOKEN" in k else v[:50] 
+                      for k, v in os.environ.items() 
+                      if "LAKEBASE" in k or "CONNECTION" in k or k.startswith("DATABRICKS")}
+        st.json(debug_vars)
+        st.info("💡 Make sure app.yaml has the resource declared and redeploy")
         st.stop()
     
     return connection_url
