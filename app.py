@@ -48,13 +48,32 @@ def get_connection_url():
     """Get the Lakebase connection URL from environment variable.
     
     In Databricks Apps, secrets configured as resources are automatically
-    injected as environment variables with the pattern: SECRET_<scope>_<key>
+    injected as environment variables.
     """
-    # Databricks Apps injects the secret as an environment variable
-    connection_url = os.environ.get("SECRET_ticketing_lakebase_url")
+    # Try different possible environment variable names
+    possible_names = [
+        "SECRET_ticketing_lakebase_url",      # scope_key with hyphen->underscore
+        "SECRET_ticketing_lakebase-url",      # scope_key with hyphen kept
+        "SECRET_TICKETING_LAKEBASE_URL",      # uppercase
+        "LAKEBASE_URL",                        # simple name
+        "secret",                              # resource name from app config
+    ]
+    
+    connection_url = None
+    for name in possible_names:
+        connection_url = os.environ.get(name)
+        if connection_url:
+            st.success(f"✅ Found connection at: {name}")
+            break
     
     if not connection_url:
         st.error("❌ Database connection not configured")
+        st.write("**Debug: Available SECRET_ environment variables:**")
+        secret_vars = {k: "***" for k in os.environ.keys() if "SECRET" in k.upper() or "LAKEBASE" in k.upper()}
+        if secret_vars:
+            st.json(secret_vars)
+        else:
+            st.warning("No SECRET or LAKEBASE environment variables found")
         st.info("💡 Configure the app resource in Databricks Apps UI: secret scope='ticketing', key='lakebase-url'")
         st.stop()
     
