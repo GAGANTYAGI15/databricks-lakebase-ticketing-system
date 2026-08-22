@@ -1,10 +1,9 @@
 import streamlit as st
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import base64
+import os
 from datetime import datetime
 from contextlib import contextmanager
-from databricks.sdk import WorkspaceClient
 
 # Page configuration
 st.set_page_config(
@@ -44,21 +43,22 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Configuration
-SCOPE = "ticketing"
-KEY = "lakebase-url"
-
 @st.cache_resource
 def get_connection_url():
-    """Fetch the Lakebase connection URL from secrets."""
-    try:
-        w = WorkspaceClient()
-        secret = w.secrets.get_secret(scope=SCOPE, key=KEY)
-        return base64.b64decode(secret.value).decode("utf-8")
-    except Exception as e:
-        st.error("❌ Could not retrieve database connection from secrets")
-        st.info("💡 Run setup_secrets.py to configure the connection")
+    """Get the Lakebase connection URL from environment variable.
+    
+    In Databricks Apps, secrets configured as resources are automatically
+    injected as environment variables with the pattern: SECRET_<scope>_<key>
+    """
+    # Databricks Apps injects the secret as an environment variable
+    connection_url = os.environ.get("SECRET_ticketing_lakebase_url")
+    
+    if not connection_url:
+        st.error("❌ Database connection not configured")
+        st.info("💡 Configure the app resource in Databricks Apps UI: secret scope='ticketing', key='lakebase-url'")
         st.stop()
+    
+    return connection_url
 
 @st.cache_resource
 def init_database():
