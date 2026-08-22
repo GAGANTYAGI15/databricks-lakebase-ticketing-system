@@ -52,7 +52,7 @@ def get_connection_url():
     so Databricks Apps injects it as environment variable 'SECRET'.
     """
     # The resource name from the app config becomes the environment variable name
-    connection_url = os.environ.get("SECRET")
+    connection_url_encoded = os.environ.get("SECRET")
     
     if not connection_url:
         st.error("❌ Database connection not found")
