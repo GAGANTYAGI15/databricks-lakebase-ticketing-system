@@ -13,17 +13,88 @@ A full-featured support ticket management system built with Streamlit and powere
 
 ✅ **Lakebase Integration**
 - Uses Lakebase Postgres for data storage
-- Connection URL-based authentication
-- Supports both OAuth tokens and native Postgres passwords
+- Connection stored securely in Databricks secrets
+- Auto-creates database tables on first run
 
 ✅ **User-Friendly UI**
 - Clean, responsive Streamlit interface
 - Custom styling and visual indicators
 - Real-time updates
 
-## Database Schema
+## Architecture
 
-The app uses two related tables:
+```
+Streamlit App (app.py)
+    ↓
+    ↓ Reads connection from Databricks secrets
+    ↓ Auto-creates tables if not exists
+    ↓
+Lakebase Postgres
+    │
+    ├── tickets table
+    └── ticket_messages table
+```
+
+## Setup Instructions
+
+### 1. Configure Database Connection
+
+Run the setup script to store your Lakebase connection URL in Databricks secrets:
+
+```python
+%run ./setup_secrets.py
+```
+
+This will:
+- Create a secret scope called "ticketing"
+- Prompt you to enter your Lakebase connection URL
+- Store it securely in Databricks secrets
+- Set permissions for all users to read the secret
+
+**Connection URL format:**
+```
+postgresql://role:password@host:5432/databricks_postgres?sslmode=require
+```
+
+- **role**: Your Databricks email
+- **password**: OAuth token or native Postgres password
+- **host**: Your Lakebase endpoint (e.g., `ep-xxx.database.cloud.databricks.com`)
+- **database**: `databricks_postgres`
+
+### 2. Deploy the App
+
+**Using Databricks Apps:**
+
+```bash
+# Initialize
+databricks apps init ticketing-system --path ./databricks-lakebase-ticketing-system
+
+# Deploy
+databricks apps deploy ticketing-system
+
+# Start
+databricks apps start ticketing-system
+
+# Get the app URL
+databricks apps get ticketing-system
+```
+
+**That's it!** The app will:
+- Read the connection URL from secrets
+- Automatically create the database tables if they don't exist
+- Start serving the ticketing system
+
+### 3. (Optional) Manual Database Initialization
+
+If you prefer to create tables manually before deploying:
+
+```python
+%run ./init_schema.py
+```
+
+This creates the `tickets` and `ticket_messages` tables if they don't exist.
+
+## Database Schema
 
 ### `tickets` table
 ```sql
@@ -46,65 +117,6 @@ author VARCHAR(255) NOT NULL
 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ```
 
-## Setup Instructions
-
-### 1. Database Setup
-
-The database schema and sample data have already been created in your Lakebase project `my-lakebase`.
-
-### 2. Get Your Connection URL
-
-**Option A: Run the helper script**
-
-Open a Databricks notebook and run:
-```python
-%run ./connection_helper.py
-```
-
-This will generate your connection URL with an OAuth token (valid for 1 hour).
-
-**Option B: Manual construction**
-
-Format: `postgresql://role:password@host:5432/databricks_postgres?sslmode=require`
-
-- **role**: Your Databricks email (e.g., `gagantyagi2000@gmail.com`)
-- **password**: OAuth token or native Postgres password
-- **host**: Your Lakebase endpoint (e.g., `ep-muddy-shape-d8ufskmd.database.us-east-2.cloud.databricks.com`)
-- **database**: `databricks_postgres`
-
-### 3. Deploy the App
-
-**Using Databricks Apps:**
-
-```bash
-# Initialize (if not already done)
-apps init ticketing-system --path ./databricks-lakebase-ticketing-system
-
-# Deploy
-apps deploy ticketing-system
-
-# Start
-apps start ticketing-system
-
-# Get the app URL
-apps get ticketing-system
-```
-
-**Local Development:**
-
-```bash
-cd databricks-lakebase-ticketing-system
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-### 4. Use the App
-
-1. Open the app URL
-2. Enter your Lakebase connection URL when prompted
-3. Click "Connect"
-4. Start managing tickets!
-
 ## Usage
 
 ### Dashboard
@@ -125,44 +137,36 @@ streamlit run app.py
 - Add new messages
 - Update ticket status
 
-## Architecture
-
-```
-Streamlit App (app.py)
-    ↓
-    ↓ psycopg2 connection
-    ↓
-Lakebase Postgres
-    │
-    ├── tickets table
-    └── ticket_messages table
-```
-
-## Sample Data
-
-The database includes:
-- 3 sample tickets with different statuses
-- 9 messages across the tickets (3 per ticket)
-- Multiple priorities (high, medium, low)
-- Different categories (Access Issue, Performance, Feature Request)
-
 ## Files
 
-- `app.py` - Main Streamlit application
-- `app.yaml` - Databricks Apps configuration
-- `requirements.txt` - Python dependencies
-- `connection_helper.py` - Helper script to generate connection URLs
-- `README.md` - This file
+- **app.py** - Main Streamlit application with auto-table creation
+- **setup_secrets.py** - One-time setup script to store connection URL
+- **init_schema.py** - Optional script to manually initialize database
+- **app.yaml** - Databricks Apps configuration
+- **requirements.txt** - Python dependencies
+- **README.md** - This file
 
-## Security Notes
+## How It Works
 
-⚠️ **Important:**
-- Never commit connection URLs with credentials to git
-- OAuth tokens expire after 1 hour
-- For production, use native Postgres passwords (non-expiring)
-- Keep connection URLs secure
+1. **First Time Setup**: Run `setup_secrets.py` to store your Lakebase URL
+2. **Deployment**: Deploy the app - it reads from secrets automatically
+3. **Auto-Init**: On first run, app creates tables if they don't exist
+4. **Ready to Use**: Start creating and managing tickets!
+
+## Security
+
+✅ **Secure by Design**
+- Connection URL stored in Databricks secrets (encrypted)
+- No credentials in code or config files
+- No manual connection URL input in the app
+- Automatic table creation (no manual SQL execution needed)
 
 ## Troubleshooting
+
+**"Could not retrieve database connection from secrets"**
+- Run `setup_secrets.py` to configure the connection
+- Verify the secret scope "ticketing" exists
+- Check that the secret key "lakebase-url" is set
 
 **Connection Failed**
 - Verify your connection URL format
@@ -171,13 +175,9 @@ The database includes:
 - For OAuth tokens, regenerate if expired (1 hour)
 
 **No Data Showing**
-- Verify the database schema exists
-- Check that sample data was inserted
-- Confirm you're connected to the correct database
-
-**Permission Errors**
-- Ensure your Postgres role has proper permissions
-- Check that you can connect with the same credentials via psql
+- Tables are created automatically on first run
+- Check database permissions
+- Verify you're connected to the correct database
 
 ## Future Enhancements
 
@@ -192,7 +192,7 @@ The database includes:
 
 ## License
 
-MIT License - feel free to use and modify!
+MIT License
 
 ## Contact
 
