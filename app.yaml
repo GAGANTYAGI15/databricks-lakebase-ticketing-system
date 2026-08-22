@@ -5,7 +5,7 @@ command:
   - --server.port=8080
 
 resources:
-  - name: lakebase_connection
+  - name: secret
     secret:
       scope: ticketing
       key: lakebase-url
