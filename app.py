@@ -2,7 +2,6 @@ import streamlit as st
 import psycopg2
 import os
 import html as html_escape
-import pandas as pd
 from datetime import datetime
 from contextlib import contextmanager
 
@@ -28,6 +27,20 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden;}
+    /* Streamlit's native sidebar collapse/expand controls are unreliable in
+       this host (the "expand" arrow can fail to reappear once collapsed) —
+       disabled in favor of our own toggle button below. */
+    [data-testid*="SidebarCollapse"] { display: none !important; }
+
+    .sidebar-toggle-btn button {
+        background-color: #ffffff !important;
+        color: #18181b !important;
+        border: 1px solid #d4d4d8 !important;
+        border-radius: 6px !important;
+        padding: 0.25rem 0.6rem !important;
+        font-size: 0.9rem !important;
+        margin-bottom: 0.5rem;
+    }
 
     html, body,
     .stApp,
@@ -86,33 +99,6 @@ st.markdown("""
         border-left: 2px solid #4f46e5;
     }
 
-    [data-testid="stSidebar"] .stButton > button {
-        background: transparent !important;
-        color: #52525b !important;
-        border: none;
-        text-align: left;
-        justify-content: flex-start;
-        font-size: 0.85rem;
-        font-weight: 500;
-        padding: 0.4rem 0.6rem;
-        border-radius: 6px;
-        box-shadow: none;
-        width: 100%;
-    }
-    [data-testid="stSidebar"] .stButton > button:hover {
-        background: #f0f0f1 !important;
-        color: #18181b !important;
-    }
-    [data-testid="stSidebar"] .stButton > button[kind="primary"] {
-        background: #4f46e5 !important;
-        color: #ffffff !important;
-        font-weight: 600;
-        margin-top: 0.75rem;
-        padding: 0.45rem 0.6rem;
-    }
-    [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
-        background: #4338ca !important;
-    }
     [data-testid="stSidebar"] hr { margin: 1rem 0; border-color: #e5e7eb; }
 
     .page-title { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.01em; margin: 0; color: #18181b; }
@@ -160,37 +146,59 @@ st.markdown("""
     .side-label { font-size: 0.72rem; font-weight: 600; color: #71717a; text-transform: uppercase; letter-spacing: 0.04em; margin: 0.9rem 0 0.25rem 0; }
     .side-value { font-size: 0.87rem; font-weight: 500; color: #18181b; }
 
-    .stButton > button {
-        border-radius: 6px;
-        font-size: 0.85rem;
-        font-weight: 500;
+    .stButton > button,
+    .stFormSubmitButton > button,
+    button[data-testid^="baseButton"] {
+        border-radius: 6px !important;
+        font-size: 0.85rem !important;
+        font-weight: 500 !important;
         background-color: #ffffff !important;
         color: #18181b !important;
         border: 1px solid #d4d4d8 !important;
     }
-    .stButton > button:hover {
+    .stButton > button:hover,
+    .stFormSubmitButton > button:hover,
+    button[data-testid^="baseButton"]:hover {
         background-color: #f4f4f5 !important;
         border-color: #a1a1aa !important;
+        color: #18181b !important;
     }
-    .stButton > button[kind="primary"] {
+    .stButton > button[kind="primary"],
+    .stFormSubmitButton > button[kind="primary"],
+    button[data-testid="baseButton-primary"] {
         background-color: #4f46e5 !important;
         color: #ffffff !important;
         border: none !important;
     }
-    .stButton > button[kind="primary"]:hover {
+    .stButton > button[kind="primary"]:hover,
+    .stFormSubmitButton > button[kind="primary"]:hover,
+    button[data-testid="baseButton-primary"]:hover {
         background-color: #4338ca !important;
+        color: #ffffff !important;
+    }
+    button[data-testid^="baseButton"] p,
+    button[data-testid^="baseButton"] div,
+    button[data-testid^="baseButton"] span {
+        color: inherit !important;
     }
     /* Sidebar buttons stay flat/transparent — these rules are more specific
        than the ones above, so they win inside the sidebar. */
-    [data-testid="stSidebar"] .stButton > button {
+    [data-testid="stSidebar"] .stButton > button,
+    [data-testid="stSidebar"] .stFormSubmitButton > button,
+    [data-testid="stSidebar"] button[data-testid^="baseButton"] {
         background: transparent !important;
         border: none !important;
     }
-    [data-testid="stSidebar"] .stButton > button:hover {
+    [data-testid="stSidebar"] .stButton > button:hover,
+    [data-testid="stSidebar"] .stFormSubmitButton > button:hover,
+    [data-testid="stSidebar"] button[data-testid^="baseButton"]:hover {
         background: #f0f0f1 !important;
     }
-    [data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    [data-testid="stSidebar"] .stButton > button[kind="primary"],
+    [data-testid="stSidebar"] .stFormSubmitButton > button[kind="primary"],
+    [data-testid="stSidebar"] button[data-testid="baseButton-primary"] {
         background: #4f46e5 !important;
+        color: #ffffff !important;
         border: none !important;
     }
 
@@ -222,10 +230,39 @@ st.markdown("""
         background-color: #f4f4f5 !important;
     }
 
-    /* Native table used for ticket lists — gives real resizable column
-       borders (drag them) and automatic text truncation instead of
-       hand-rolled HTML columns overflowing into each other. */
-    [data-testid="stDataFrame"] { border: 1px solid #e5e7eb; border-radius: 8px; }
+    /* Ticket list table — plain HTML, fully styled here (unlike
+       st.dataframe, which renders through a canvas component we can't
+       reach with CSS). */
+    .ticket-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 0.85rem;
+    }
+    .ticket-table thead th {
+        text-align: left;
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: #71717a !important;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 0.55rem 0.75rem;
+        border-bottom: 1px solid #e5e7eb;
+        background: #fafafa !important;
+    }
+    .ticket-table td {
+        padding: 0.6rem 0.75rem;
+        border-bottom: 1px solid #f4f4f5;
+        color: #18181b !important;
+        background: #ffffff !important;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .ticket-table tbody tr:hover td { background: #fafafa !important; }
+    .tl-id { color: #71717a !important; font-weight: 500; }
+    .tl-title { font-weight: 500; color: #18181b !important; }
+    .tl-muted { color: #71717a !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -463,53 +500,44 @@ def render_banner():
         st.markdown(f'<div class="banner banner-success">✓ {esc(ok)}</div>', unsafe_allow_html=True)
 
 
-def _status_style(val):
-    styles = {
-        "Open": "color: #b45309; font-weight: 600;",
-        "In Progress": "color: #1d4ed8; font-weight: 600;",
-        "Resolved": "color: #047857; font-weight: 600;",
-    }
-    return styles.get(val, "")
+def status_badge_html(status):
+    return (
+        f'<span class="status-badge {status}">'
+        f'<span class="status-dot {status}"></span>{STATUS_LABELS.get(status, status.title())}</span>'
+    )
 
 
 def render_ticket_list(tickets, key_prefix):
-    """Native, resizable data grid — drag the column border in the header
-    to resize, and long text truncates instead of overflowing into the
-    next column."""
+    """Plain HTML table — st.dataframe renders through an internal canvas
+    component that ignores our page CSS entirely, which is why it kept
+    showing up dark. A real <table> is fully styleable and won't drift out
+    of alignment since header and rows share one element."""
     if not tickets:
         st.markdown('<p style="color:#71717a;font-size:0.85rem;">No tickets found.</p>', unsafe_allow_html=True)
         return
 
-    df = pd.DataFrame(tickets, columns=["ticket_id", "title", "status", "created_by", "created_at"])
-    view = pd.DataFrame({
-        "Ticket": df["ticket_id"].apply(lambda x: f"#{x}"),
-        "Title": df["title"],
-        "Status": df["status"].map(STATUS_LABELS),
-        "Created by": df["created_by"],
-        "Created": df["created_at"].apply(fmt_date),
-    })
-
-    styled = view.style.map(_status_style, subset=["Status"])
-
-    st.dataframe(
-        styled,
-        use_container_width=True,
-        hide_index=True,
-        key=f"df_{key_prefix}",
-        column_config={
-            "Ticket": st.column_config.TextColumn(width="small"),
-            "Title": st.column_config.TextColumn(width="large"),
-            "Status": st.column_config.TextColumn(width="small"),
-            "Created by": st.column_config.TextColumn(width="medium"),
-            "Created": st.column_config.TextColumn(width="small"),
-        },
+    rows_html = "".join(
+        f'<tr><td class="tl-id">#{ticket_id}</td>'
+        f'<td class="tl-title" title="{esc(title)}">'
+        f'{esc(title if len(title) <= 60 else title[:57] + "...")}</td>'
+        f'<td>{status_badge_html(status)}</td>'
+        f'<td class="tl-muted">{esc(created_by)}</td>'
+        f'<td class="tl-muted">{fmt_date(created_at)}</td></tr>'
+        for ticket_id, title, status, created_by, created_at in tickets
     )
 
-    # Row-click selection on st.dataframe needs a newer Streamlit release
-    # than this app can rely on, so ticket opening uses a plain dropdown +
-    # button instead — works on every Streamlit version.
+    table_html = (
+        '<table class="ticket-table">'
+        '<colgroup><col style="width:8%"><col style="width:42%">'
+        '<col style="width:15%"><col style="width:20%"><col style="width:15%"></colgroup>'
+        '<thead><tr><th>Ticket</th><th>Title</th><th>Status</th>'
+        '<th>Created by</th><th>Created</th></tr></thead>'
+        f'<tbody>{rows_html}</tbody></table>'
+    )
+    st.markdown(table_html, unsafe_allow_html=True)
+
     st.markdown('<div style="height:0.6rem;"></div>', unsafe_allow_html=True)
-    options = {f"#{r.ticket_id} — {r.title}": int(r.ticket_id) for r in df.itertuples()}
+    options = {f"#{t[0]} — {t[1]}": int(t[0]) for t in tickets}
     col_select, col_open = st.columns([4, 1])
     with col_select:
         choice = st.selectbox(
@@ -532,14 +560,15 @@ def page_overview():
     stats = get_ticket_stats()
     render_banner()
     if stats:
-        st.markdown(f"""
-        <div class="stats-row">
-            <div class="stat-block"><div class="stat-label">Total tickets</div><div class="stat-value">{stats['total']}</div></div>
-            <div class="stat-block"><div class="stat-label">Open</div><div class="stat-value">{stats['open']}</div></div>
-            <div class="stat-block"><div class="stat-label">In progress</div><div class="stat-value">{stats['in_progress']}</div></div>
-            <div class="stat-block"><div class="stat-label">Resolved</div><div class="stat-value">{stats['resolved']}</div></div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="stats-row">'
+            f'<div class="stat-block"><div class="stat-label">Total tickets</div><div class="stat-value">{stats["total"]}</div></div>'
+            f'<div class="stat-block"><div class="stat-label">Open</div><div class="stat-value">{stats["open"]}</div></div>'
+            f'<div class="stat-block"><div class="stat-label">In progress</div><div class="stat-value">{stats["in_progress"]}</div></div>'
+            f'<div class="stat-block"><div class="stat-label">Resolved</div><div class="stat-value">{stats["resolved"]}</div></div>'
+            '</div>',
+            unsafe_allow_html=True
+        )
 
     st.markdown('<div style="font-weight:600; font-size:0.95rem; margin-bottom:0.5rem; color:#18181b;">Recent Tickets</div>', unsafe_allow_html=True)
     tickets = get_all_tickets()
@@ -584,16 +613,13 @@ def page_ticket_detail(ticket_id):
         if messages:
             for message_id, text, author, msg_created_at in messages:
                 initials = "".join([w[0].upper() for w in author.split("@")[0].split(".")[:2]]) or "?"
-                st.markdown(f"""
-                    <div class="msg-row">
-                        <div class="msg-avatar">{esc(initials)}</div>
-                        <div style="flex:1;">
-                            <span class="msg-author">{esc(author)}</span>
-                            <span class="msg-time">{fmt_date(msg_created_at, "%I:%M %p")}</span>
-                            <div class="msg-text">{esc(text)}</div>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="msg-row"><div class="msg-avatar">{esc(initials)}</div>'
+                    f'<div style="flex:1;"><span class="msg-author">{esc(author)}</span>'
+                    f'<span class="msg-time">{fmt_date(msg_created_at, "%I:%M %p")}</span>'
+                    f'<div class="msg-text">{esc(text)}</div></div></div>',
+                    unsafe_allow_html=True
+                )
         else:
             st.markdown('<p style="color:#71717a; font-size: 0.85rem;">No messages yet.</p>', unsafe_allow_html=True)
 
@@ -672,6 +698,8 @@ def main():
         st.session_state.current_page = "overview"
     if "selected_ticket" not in st.session_state:
         st.session_state.selected_ticket = None
+    if "sidebar_open" not in st.session_state:
+        st.session_state.sidebar_open = True
 
     if not check_database():
         st.markdown(f'<div class="banner banner-error">⚠️ Database unavailable: {esc(st.session_state.get("last_error", ""))}</div>', unsafe_allow_html=True)
@@ -684,23 +712,43 @@ def main():
         ("resolved", "●", "Resolved"),
     ]
 
-    with st.sidebar:
-        st.markdown('<div class="sidebar-brand">🎫 Support Hub</div>', unsafe_allow_html=True)
-        for page_key, icon, label in nav_items:
-            is_active = (st.session_state.current_page == page_key and not st.session_state.selected_ticket)
-            if is_active:
-                st.markdown(f'<div class="nav-active">{icon} {label}</div>', unsafe_allow_html=True)
-            else:
-                if st.button(f"{icon}  {label}", key=f"nav_{page_key}"):
-                    st.session_state.current_page = page_key
-                    st.session_state.selected_ticket = None
+    if st.session_state.sidebar_open:
+        with st.sidebar:
+            top_l, top_r = st.columns([1, 4])
+            with top_l:
+                if st.button("☰", key="sidebar_toggle_close"):
+                    st.session_state.sidebar_open = False
                     st.rerun()
+            with top_r:
+                st.markdown('<div class="sidebar-brand" style="padding-top:0.3rem;">Support Hub</div>', unsafe_allow_html=True)
 
-        st.markdown("<hr>", unsafe_allow_html=True)
-        if st.button("＋  New Ticket", key="nav_new", type="primary"):
-            st.session_state.current_page = "new_ticket"
-            st.session_state.selected_ticket = None
+            for page_key, icon, label in nav_items:
+                is_active = (st.session_state.current_page == page_key and not st.session_state.selected_ticket)
+                if is_active:
+                    st.markdown(f'<div class="nav-active">{icon} {label}</div>', unsafe_allow_html=True)
+                else:
+                    if st.button(f"{icon}  {label}", key=f"nav_{page_key}"):
+                        st.session_state.current_page = page_key
+                        st.session_state.selected_ticket = None
+                        st.rerun()
+
+            st.markdown("<hr>", unsafe_allow_html=True)
+            if st.button("＋  New Ticket", key="nav_new", type="primary"):
+                st.session_state.current_page = "new_ticket"
+                st.session_state.selected_ticket = None
+                st.rerun()
+    else:
+        # Sidebar is hidden — the toggle above vanished with it, so give a
+        # fallback button in the main area to bring it back.
+        st.markdown(
+            "<style>[data-testid='stSidebar']{display:none !important;}</style>",
+            unsafe_allow_html=True
+        )
+        st.markdown('<div class="sidebar-toggle-btn">', unsafe_allow_html=True)
+        if st.button("☰", key="sidebar_toggle_open"):
+            st.session_state.sidebar_open = True
             st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
     if st.session_state.selected_ticket:
         page_ticket_detail(st.session_state.selected_ticket)
