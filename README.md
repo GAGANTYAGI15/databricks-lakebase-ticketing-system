@@ -173,7 +173,3 @@ created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ## License
 
 MIT License
-
-## Contact
-
-Built as part of the Databricks Lakebase Boot Camp Day 1 Homework.
